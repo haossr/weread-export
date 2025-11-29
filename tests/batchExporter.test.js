@@ -8,6 +8,8 @@ const {
   sanitizeFileName,
   downloadMarkdownFile,
   copyMarkdownToClipboard,
+  buildCombinedExport,
+  downloadCombinedExport,
 } = require("../src/entrypoints/popup/exporter.ts");
 
 const originalFetch = global.fetch;
@@ -55,7 +57,7 @@ test("batchRun waits between sequential runs when delay is set", async () => {
 test("exportBookAsMarkdown returns markdown and title", async () => {
   const calls = [];
   const markData = {
-    book: { title: "Test Book", author: "Author" },
+    book: { title: "Test Book", author: "Author", cover: "https://example.com/s_cover.png" },
     chapters: [{ chapterUid: "1", chapterIdx: 1, title: "Ch1" }],
     updated: [
       {
@@ -82,6 +84,11 @@ test("exportBookAsMarkdown returns markdown and title", async () => {
   const result = await exportBookAsMarkdown("book-1", "user-vid", []);
   assert.equal(result.title, "Test Book");
   assert.ok(result.markdown.includes("Test Book"));
+  assert.ok(result.markdown.startsWith("![Test Book 封面](https://example.com/t6_cover.png)"));
+  assert.equal(result.coverUrl, "https://example.com/t6_cover.png");
+  assert.equal(result.notes.length, 1);
+  assert.equal(result.notes[0].chapterTitle, "Ch1");
+  assert.equal(result.notes[0].markText, "note content");
   assert.equal(calls.length, 3);
 
   global.fetch = originalFetch;
@@ -117,6 +124,67 @@ test("exportBookAsMarkdown retries on retryable error", async () => {
 test("sanitizeFileName strips illegal characters", () => {
   assert.equal(sanitizeFileName('a<>:"/\\\\|?*b'), "a_b");
   assert.equal(sanitizeFileName("   "), "导出");
+});
+
+test("buildCombinedExport outputs JSON with all books", () => {
+  const items = [
+    { bookId: "1", title: "A", markdown: "m1", coverUrl: "c1", notes: [{ markText: "n1" }] },
+    { bookId: "2", title: "B", markdown: "m2", notes: [{ markText: "n2" }] },
+  ];
+  const result = buildCombinedExport(items, "json");
+  assert.equal(result.fileName, "weread-export.json");
+  assert.equal(result.mimeType, "application/json;charset=utf-8");
+  const parsed = JSON.parse(result.content);
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[1].title, "B");
+  assert.equal(parsed[0].coverUrl, "c1");
+  assert.equal(parsed[0].notes[0].markText, "n1");
+});
+
+test("buildCombinedExport outputs CSV and escapes newlines/quotes", () => {
+  const items = [
+    {
+      bookId: "1",
+      title: 'A "quote"',
+      markdown: "line1\nline2",
+      coverUrl: "c1",
+      author: "Auth",
+      rating: 5,
+      notes: [
+        {
+          chapterUid: 1,
+          chapterTitle: "Ch1",
+          range: "1-2",
+          markText: "mk",
+          reviewText: "rv",
+          createdAt: 123,
+          readingTime: 10,
+          startTime: 1,
+          finishTime: 2,
+        },
+      ],
+    },
+  ];
+  const result = buildCombinedExport(items, "csv");
+  assert.equal(result.fileName, "weread-export.csv");
+  assert.equal(result.mimeType, "text/csv;charset=utf-8");
+  assert.ok(result.content.includes('"A ""quote"""'));
+  assert.ok(result.content.includes("mk"));
+  assert.ok(result.content.includes("rv"));
+  assert.ok(result.content.startsWith("bookId,title,author,rating,coverUrl,chapterUid"));
+});
+
+test("buildCombinedExport outputs combined markdown with cover", () => {
+  const items = [
+    { bookId: "1", title: "Book1", markdown: "![Book1 封面](c1)\n\nm1", coverUrl: "c1" },
+    { bookId: "2", title: "Book2", markdown: "m2" },
+  ];
+  const result = buildCombinedExport(items, "markdown");
+  assert.equal(result.fileName, "weread-export.md");
+  assert.equal(result.mimeType, "text/markdown;charset=utf-8");
+  assert.ok(result.content.includes("# Book1"));
+  assert.ok(result.content.includes("![Book1 封面](c1)"));
+  assert.ok(result.content.includes("---"));
 });
 
 test("downloadMarkdownFile uses document link and blob URLs", async () => {
@@ -156,6 +224,45 @@ test("downloadMarkdownFile uses document link and blob URLs", async () => {
   assert.equal(downloads[0], "Title.md");
   assert.ok(clicks.length === 1);
   assert.ok(revokes.includes("blob:mock"));
+
+  global.document = originalDocument;
+  global.URL = originalURL;
+});
+
+test("downloadCombinedExport triggers download for chosen format", () => {
+  const hrefs = [];
+  const downloads = [];
+  const revokes = [];
+  const clicks = [];
+
+  global.URL = {
+    createObjectURL: (blob) => {
+      hrefs.push(blob);
+      return "blob:combined";
+    },
+    revokeObjectURL: (url) => revokes.push(url),
+  };
+
+  global.document = {
+    createElement: () => ({
+      set href(val) {
+        hrefs.push(val);
+      },
+      get href() {
+        return hrefs[hrefs.length - 1];
+      },
+      set download(val) {
+        downloads.push(val);
+      },
+      click: () => clicks.push(true),
+    }),
+  };
+
+  downloadCombinedExport([{ bookId: "1", title: "T", markdown: "m" }], "json");
+
+  assert.equal(downloads[0], "weread-export.json");
+  assert.ok(clicks.length === 1);
+  assert.ok(revokes.includes("blob:combined"));
 
   global.document = originalDocument;
   global.URL = originalURL;

@@ -2,8 +2,7 @@
   import { onDestroy } from "svelte";
   import { batchRun, sleep } from "./batch";
   import {
-    copyMarkdownToClipboard,
-    downloadMarkdownFile,
+    downloadCombinedExport,
     exportBookAsMarkdown,
   } from "./exporter";
 
@@ -13,6 +12,11 @@
   const RETRY_SCHEDULE = [1000, 3000, 7000];
   const BULK_RETRIES = 2;
   const REQUEST_RETRY_DELAYS = RETRY_SCHEDULE.slice(0, 2);
+  const EXPORT_FORMATS = [
+    { value: "markdown", label: "Markdown (.md，合并一份)" },
+    { value: "json", label: "JSON (.json，合并一份)" },
+    { value: "csv", label: "CSV (.csv，合并一份)" },
+  ];
 
   let books = [];
   let selectedBookIds = [];
@@ -22,6 +26,7 @@
   let retryCount = 0;
   let failedListUrl = "";
   let selectAllCheckbox;
+  let exportFormat = "markdown";
 
   $: totalBooks = books.length;
   $: hasSelection = selectedBookIds.length > 0;
@@ -30,6 +35,8 @@
   $: if (selectAllCheckbox) {
     selectAllCheckbox.indeterminate = selectionIndeterminate;
   }
+  $: singleButtonText =
+    exportFormat === "markdown" ? (singleWorking ? "复制中..." : "复制选中") : singleWorking ? "导出中..." : "导出选中";
 
   function getNoteBooks() {
     fetch("https://weread.qq.com/api/user/notebook")
@@ -42,6 +49,8 @@
       .catch((error) => console.error("获取书单失败", error));
   }
   getNoteBooks();
+  $: progressPercent =
+    progress.total > 0 ? Math.min(100, Math.round((progress.done / progress.total) * 100)) : 0;
 
   function toggleSelectAll(event) {
     if (!books.length || bulkWorking) return;
@@ -88,13 +97,18 @@
     const bookId = selectedBookIds[0];
     singleWorking = true;
     try {
-      const { markdown, title } = await exportBookAsMarkdown(
+      const exported = await exportBookAsMarkdown(
         bookId,
         userVid,
         REQUEST_RETRY_DELAYS,
       );
-      await copyMarkdownToClipboard(markdown);
-      alert(`已复制 ${title} 的 Markdown 到粘贴板`);
+      if (exportFormat === "markdown") {
+        downloadCombinedExport([exported], exportFormat);
+        alert(`已导出 ${exported.title} 的 Markdown 文件`);
+      } else {
+        downloadCombinedExport([exported], exportFormat);
+        alert(`已导出 ${exported.title} 的 ${exportFormat.toUpperCase()} 文件`);
+      }
     } catch (error) {
       console.error("导出失败", error);
       alert("导出失败，请稍后重试");
@@ -113,6 +127,7 @@
 
     let pending = [...selectedBookIds];
     let finalFailed = [];
+    let combinedSuccess = [];
 
     try {
       for (let attempt = 0; attempt <= BULK_RETRIES && pending.length; attempt++) {
@@ -121,12 +136,12 @@
           pending,
           async (bookId) => {
             try {
-              const { markdown, title } = await exportBookAsMarkdown(
+              const exported = await exportBookAsMarkdown(
                 bookId,
                 userVid,
                 REQUEST_RETRY_DELAYS,
               );
-              downloadMarkdownFile(title, markdown);
+              combinedSuccess = [...combinedSuccess, exported];
               progress = { ...progress, done: progress.done + 1 };
             } catch (error) {
               console.error("导出失败", bookId, error);
@@ -160,6 +175,9 @@
         createFailedList(finalFailed);
       } else {
         progress = { ...progress, failed: [] };
+        if (combinedSuccess.length) {
+          downloadCombinedExport(combinedSuccess, exportFormat);
+        }
       }
     } finally {
       bulkWorking = false;
@@ -173,6 +191,18 @@
   <span class="mdui-typo-title">导出笔记</span>
   <div class="mdui-toolbar-spacer" />
   <div class="toolbar-actions">
+    <label class="format-select">
+      <span>格式</span>
+      <select
+        class="mdui-select"
+        bind:value={exportFormat}
+        disabled={singleWorking || bulkWorking}
+      >
+        {#each EXPORT_FORMATS as option}
+          <option value={option.value}>{option.label}</option>
+        {/each}
+      </select>
+    </label>
     <label class="mdui-checkbox select-all">
       <input
         type="checkbox"
@@ -189,7 +219,7 @@
       on:click={exportSelectedSingle}
       disabled={!hasSelection || singleWorking || bulkWorking}
     >
-      {singleWorking ? "复制中..." : "复制选中"}
+      {singleButtonText}
     </button>
     <button class="mdui-btn mdui-color-theme" on:click={handleBulkExport} disabled={!hasSelection || bulkWorking}>
       {bulkWorking ? "批量导出中..." : "批量导出"}
@@ -203,6 +233,10 @@
     <div class="progress-line">
       重试 {retryCount} · 并发 {BATCH_OPTIONS.concurrency} · 间隔 {BATCH_OPTIONS.delayMs}ms
     </div>
+    <div class="progress-bar">
+      <div class="progress-bar__fill" style={`width: ${progressPercent}%`} />
+    </div>
+    <div class="progress-line small">已完成 {progressPercent}%</div>
     {#if progress.failed.length}
       <div class="progress-line warning">
         失败 {progress.failed.length} 本
@@ -247,6 +281,19 @@
     gap: 8px;
   }
 
+  .format-select {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: #fff;
+    font-size: 13px;
+  }
+
+  .format-select select {
+    padding: 4px 6px;
+    border-radius: 4px;
+  }
+
   .select-all {
     display: inline-flex;
     align-items: center;
@@ -269,6 +316,25 @@
   .progress-line {
     margin-bottom: 4px;
     font-size: 13px;
+  }
+
+  .progress-line.small {
+    color: #777;
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #e0e0e0;
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 6px 0;
+  }
+
+  .progress-bar__fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3f51b5, #2196f3);
+    transition: width 0.2s ease;
   }
 
   .warning {
