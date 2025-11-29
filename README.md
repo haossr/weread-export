@@ -2,7 +2,7 @@
 <div align="center">
 一键导出微信读书笔记
 
-![](https://raw.githubusercontent.com/scarqin/wxread-export/main/wiki/app.png)
+![](https://raw.githubusercontent.com/haossr/weread-export/main/wiki/app.png)
 
 </div>
 
@@ -23,7 +23,7 @@
 
 ## 一键导出示例（Markdown）
 
-![](https://raw.githubusercontent.com/scarqin/wxread-export/main/wiki/note-demo.png)
+![](https://raw.githubusercontent.com/haossr/weread-export/main/wiki/note-demo.png)
 
 # 安装
 
@@ -38,7 +38,7 @@
 1. clone 仓库
 
 ```
-git clone https://github.com/scarqin/wxread-export.git
+git clone https://github.com/haossr/weread-export.git
 ```
 
 2. Chrome 浏览器访问 [chrome://extensions/](chrome://extensions/)，打开右上角开发者模式，拖入仓库文件到此界面。
@@ -50,7 +50,7 @@ git clone https://github.com/scarqin/wxread-export.git
 ## API 文档
 
 [在线 API 文档](https://www.eolink.com/share/index?shareCode=65wWvE)
-![](https://raw.githubusercontent.com/scarqin/wxread-export/main/wiki/eolink.png)
+![](https://raw.githubusercontent.com/haossr/weread-export/main/wiki/eolink.png)
 
 ## 安装依赖
 

@@ -9,6 +9,10 @@ export type NoteRecord = {
   rating?: string | number;
   publisher?: string;
   isbn?: string;
+  binding?: string;
+  publishYear?: number;
+  originalPublishYear?: number;
+  myRating?: string | number;
   finishTime?: number;
   startTime?: number;
   readingTime?: number;
@@ -29,6 +33,10 @@ export type ExportedBook = {
   author?: string;
   rating?: string | number;
   publisher?: string;
+  binding?: string;
+  publishYear?: number;
+  originalPublishYear?: number;
+  myRating?: string | number;
   notes: NoteRecord[];
   finishTime?: number;
   startTime?: number;
@@ -67,12 +75,24 @@ function normalizeCoverUrl(raw?: string) {
   return raw.replace("s_", "t6_");
 }
 
+function normalizeText(value: any) {
+  if (typeof value !== "string") return value;
+  return value.replace(/[\u2028\u2029]/g, "\n");
+}
+
+function toYear(value: any) {
+  if (!value) return undefined;
+  const date = new Date(typeof value === "string" ? value.replace(" ", "T") : value * 1000);
+  const year = date.getFullYear();
+  return Number.isFinite(year) ? year : undefined;
+}
+
 function buildBookMeta(bookId: string, markBook: any, infoBook: any) {
   const combined = { ...(infoBook || {}), ...(markBook || {}) };
   return {
     bookId,
-    title: markBook?.title || infoBook?.title || bookId,
-    author: combined.author,
+    title: normalizeText(markBook?.title || infoBook?.title || bookId),
+    author: normalizeText(combined.author),
     cover: combined.cover,
     rating:
       combined.rating ??
@@ -80,8 +100,16 @@ function buildBookMeta(bookId: string, markBook: any, infoBook: any) {
       combined.newRating ??
       combined.star ??
       (typeof combined.ratingDetail?.recent !== "undefined" ? combined.ratingDetail.recent : ""),
+    myRating:
+      combined.myRating ??
+      combined.newRatingDetail?.myRating ??
+      combined.ratingDetail?.myRating ??
+      "",
     isbn: combined.isbn || combined.isbn13 || "",
-    publisher: combined.publisher || combined.publish || "",
+    publisher: normalizeText(combined.publisher || combined.publish || ""),
+    binding: normalizeText(combined.format || ""),
+    publishYear: toYear(combined.publishTime),
+    originalPublishYear: toYear(combined.originalPublishTime) || toYear(combined.publishTime),
   };
 }
 
@@ -116,7 +144,7 @@ function buildNoteRecords(
       return {
         bookId: mark.bookId || meta.bookId,
         title: meta.title,
-        author: meta.author,
+        author: normalizeText(meta.author),
         coverUrl: normalizeCoverUrl(meta.cover),
         rating: meta.rating,
         publisher: meta.publisher,
@@ -124,8 +152,8 @@ function buildNoteRecords(
         chapterUid: mark.chapterUid,
         chapterTitle: findChapterTitle(chapters, mark.chapterUid),
         range: mark.range,
-        markText: mark.markText || mark.abstract || "",
-        reviewText: reviewMap.get(key) || "",
+        markText: normalizeText(mark.markText || mark.abstract || ""),
+        reviewText: normalizeText(reviewMap.get(key) || ""),
         createdAt: mark.createTime || "",
         style: mark.style,
         readingTime: progress.readingTime,
@@ -154,7 +182,7 @@ export async function exportBookAsMarkdown(
         urls.map(fetchJson),
       );
       const meta = buildBookMeta(bookId, markData?.book, infoData);
-      const markdown = generateBookMark(markData, reviewData, progressData);
+      const markdown = normalizeText(generateBookMark(markData, reviewData, progressData));
       const title = meta.title;
       const coverUrl = normalizeCoverUrl(meta.cover);
       const markdownWithCover = coverUrl
@@ -170,6 +198,10 @@ export async function exportBookAsMarkdown(
         rating: meta.rating,
         publisher: meta.publisher,
         isbn: meta.isbn,
+        binding: meta.binding,
+        publishYear: meta.publishYear,
+        originalPublishYear: meta.originalPublishYear,
+        myRating: meta.myRating,
         notes,
         finishTime: progressData?.book?.finishTime,
         startTime: progressData?.book?.startReadingTime,
@@ -228,6 +260,10 @@ export function buildCombinedExport(items: ExportedBook[], format: ExportFormat)
     author: item.author,
     rating: item.rating,
     publisher: item.publisher,
+    binding: item.binding,
+    publishYear: item.publishYear,
+    originalPublishYear: item.originalPublishYear,
+    myRating: item.myRating,
     notes: item.notes || [],
     finishTime: item.finishTime ?? item.notes?.[0]?.finishTime ?? 0,
     startTime: item.startTime ?? item.notes?.[0]?.startTime ?? 0,
@@ -252,6 +288,10 @@ export function buildCombinedExport(items: ExportedBook[], format: ExportFormat)
           publisher: note.publisher || item.publisher || "",
           coverUrl: note.coverUrl || item.coverUrl || "",
           isbn: note.isbn || item.isbn || "",
+          binding: item.binding || "",
+          publishYear: item.publishYear || "",
+          originalPublishYear: item.originalPublishYear || "",
+          myRating: item.myRating || "",
           chapterUid: note.chapterUid ?? "",
           chapterTitle: note.chapterTitle || "",
           range: note.range || "",
@@ -280,6 +320,10 @@ export function buildCombinedExport(items: ExportedBook[], format: ExportFormat)
       "rating",
       "isbn",
       "publisher",
+      "binding",
+      "publishYear",
+      "originalPublishYear",
+      "myRating",
       "coverUrl",
       "chapterUid",
       "chapterTitle",
@@ -303,6 +347,10 @@ export function buildCombinedExport(items: ExportedBook[], format: ExportFormat)
             item.rating || "",
             note.isbn || item.isbn || "",
             note.publisher || item.publisher || "",
+            item.binding || "",
+            item.publishYear || "",
+            item.originalPublishYear || "",
+            item.myRating || "",
             note.coverUrl || item.coverUrl || "",
             note.chapterUid ?? "",
             note.chapterTitle || "",
@@ -344,5 +392,76 @@ export function buildCombinedExport(items: ExportedBook[], format: ExportFormat)
 
 export function downloadCombinedExport(items: ExportedBook[], format: ExportFormat) {
   const { fileName, content, mimeType } = buildCombinedExport(items, format);
+  downloadTextFile(fileName, content, mimeType);
+}
+
+function formatDate(ts?: number | string) {
+  if (!ts) return "";
+  const num = typeof ts === "string" ? Number(ts) : ts;
+  const ms = Number.isFinite(num) ? Number(num) * 1000 : undefined;
+  const date = ms ? new Date(ms) : new Date(ts as any);
+  if (Number.isNaN(date.getTime())) return "";
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export function buildGoodreadsCsv(items: ExportedBook[]) {
+  const header = [
+    "Title",
+    "Author",
+    "ISBN",
+    "My Rating",
+    "Average Rating",
+    "Publisher",
+    "Binding",
+    "Year Published",
+    "Original Publication Year",
+    "Date Read",
+    "Date Added",
+    "Shelves",
+    "Bookshelves",
+    "My Review",
+  ];
+
+  const rows = items.map((item) => {
+    const review =
+      item.notes?.map((n) => n.reviewText).filter(Boolean).join("；") ||
+      item.notes?.map((n) => n.markText).filter(Boolean).join("；") ||
+      "";
+    const dateRead = formatDate(item.finishTime);
+    const dateAdded = formatDate(item.startTime);
+    const shelves = dateRead ? "read" : "";
+    const bookshelves = shelves;
+    return [
+      item.title || "",
+      item.author || "",
+      item.isbn || "",
+      item.myRating || "",
+      item.rating || "",
+      item.publisher || "",
+      item.binding || "",
+      item.publishYear || "",
+      item.originalPublishYear || item.publishYear || "",
+      dateRead,
+      dateAdded,
+      shelves,
+      bookshelves,
+      review,
+    ]
+      .map((v) => escapeCsv(String(v ?? "")))
+      .join(",");
+  });
+
+  return {
+    fileName: "goodreads-export.csv",
+    content: [header.join(","), ...rows].join("\n"),
+    mimeType: "text/csv;charset=utf-8",
+  };
+}
+
+export function downloadGoodreadsCsv(items: ExportedBook[]) {
+  const { fileName, content, mimeType } = buildGoodreadsCsv(items);
   downloadTextFile(fileName, content, mimeType);
 }

@@ -10,6 +10,7 @@ const {
   copyMarkdownToClipboard,
   buildCombinedExport,
   downloadCombinedExport,
+  buildGoodreadsCsv,
 } = require("../src/entrypoints/popup/exporter.ts");
 
 const originalFetch = global.fetch;
@@ -195,7 +196,7 @@ test("buildCombinedExport outputs CSV and escapes newlines/quotes", () => {
   assert.ok(result.content.includes('"A ""quote"""'));
   assert.ok(result.content.includes("mk"));
   assert.ok(result.content.includes("rv"));
-  assert.ok(result.content.startsWith("bookId,title,author,rating,isbn,publisher,coverUrl,chapterUid"));
+  assert.ok(result.content.startsWith("bookId,title,author,rating,isbn,publisher,binding,publishYear,originalPublishYear,myRating,coverUrl,chapterUid"));
   assert.ok(result.content.includes("ISBN-CSV"));
   assert.ok(result.content.includes("Pub-CSV"));
 });
@@ -211,6 +212,40 @@ test("buildCombinedExport outputs combined markdown with cover", () => {
   assert.ok(result.content.includes("# Book1"));
   assert.ok(result.content.includes("![Book1 封面](c1)"));
   assert.ok(result.content.includes("---"));
+});
+
+test("buildGoodreadsCsv outputs expected columns and values", () => {
+  const items = [
+    {
+      bookId: "1",
+      title: "Book1",
+      author: "Author1",
+      isbn: "ISBN-1",
+      publisher: "Pub1",
+      binding: "Paperback",
+      publishYear: 2020,
+      originalPublishYear: 2018,
+      myRating: 5,
+      rating: 4.3,
+      startTime: 1609459200,
+      finishTime: 1612137600,
+      notes: [{ reviewText: "Nice", markText: "Good" }],
+      markdown: "",
+    },
+  ];
+
+  const { fileName, content, mimeType } = buildGoodreadsCsv(items);
+  const lines = content.split("\n");
+  assert.equal(fileName, "goodreads-export.csv");
+  assert.equal(mimeType, "text/csv;charset=utf-8");
+  assert.equal(lines[0].startsWith("Title,Author,ISBN,My Rating"), true);
+  assert.ok(content.includes("Book1"));
+  assert.ok(content.includes("Pub1"));
+  assert.ok(content.includes("Paperback"));
+  assert.ok(content.includes("2020"));
+  assert.ok(content.includes("2018"));
+  assert.ok(content.includes("read"));
+  assert.ok(content.includes("Nice"));
 });
 
 test("downloadMarkdownFile uses document link and blob URLs", async () => {

@@ -6,7 +6,7 @@ export default defineConfig({
   srcDir: "src",
   manifest: {
     name: "微信读书导出",
-    homepage_url: "https://github.com/scarqin/wxread-export",
+    homepage_url: "https://github.com/haossr/weread-export",
     host_permissions: ["https://weread.qq.com/*"],
   },
   vite: () => ({

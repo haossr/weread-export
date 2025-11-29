@@ -3,6 +3,7 @@
   import { batchRun, sleep } from "./batch";
   import {
     downloadCombinedExport,
+    downloadGoodreadsCsv,
     exportBookAsMarkdown,
   } from "./exporter";
 
@@ -26,6 +27,7 @@
   let failedListUrl = "";
   let selectAllCheckbox;
   let exportFormat = "markdown";
+  let exportReadingWorking = false;
 
   $: totalBooks = books.length;
   $: hasSelection = selectedBookIds.length > 0;
@@ -41,7 +43,7 @@
       .then((data) => {
         const list = Array.isArray(data?.books) ? data.books.map((val) => val.book) : [];
         books = list;
-        selectedBookIds = list[0] ? [list[0].bookId] : [];
+        selectedBookIds = [];
       })
       .catch((error) => console.error("获取书单失败", error));
   }
@@ -152,6 +154,76 @@
   }
 
   onDestroy(resetFailedList);
+
+  async function handleExportReadingRecords() {
+    if (bulkWorking || exportReadingWorking) return;
+    const targetIds = books.map((b) => b.bookId).filter(Boolean);
+    if (!targetIds.length) return;
+
+    exportReadingWorking = true;
+    retryCount = 0;
+    resetFailedList();
+    progress = { done: 0, total: targetIds.length, failed: [] };
+
+    let pending = [...targetIds];
+    let finalFailed = [];
+    let combinedSuccess = [];
+
+    try {
+      for (let attempt = 0; attempt <= BULK_RETRIES && pending.length; attempt++) {
+        const failedThisRound = [];
+        await batchRun(
+          pending,
+          async (bookId) => {
+            try {
+              const exported = await exportBookAsMarkdown(
+                bookId,
+                userVid,
+                REQUEST_RETRY_DELAYS,
+              );
+              combinedSuccess = [...combinedSuccess, exported];
+              progress = { ...progress, done: progress.done + 1 };
+            } catch (error) {
+              console.error("导出失败", bookId, error);
+              failedThisRound.push(bookId);
+            }
+          },
+          { concurrency: BATCH_OPTIONS.concurrency, delayMs: BATCH_OPTIONS.delayMs },
+        );
+
+        if (!failedThisRound.length) {
+          finalFailed = [];
+          break;
+        }
+
+        if (attempt >= BULK_RETRIES) {
+          finalFailed = failedThisRound;
+          break;
+        }
+
+        pending = failedThisRound;
+        retryCount = attempt + 1;
+        progress = { ...progress, failed: pending };
+        const waitMs = RETRY_SCHEDULE[Math.min(attempt, RETRY_SCHEDULE.length - 1)] || 0;
+        if (waitMs) {
+          await sleep(waitMs);
+        }
+      }
+
+      if (finalFailed.length) {
+        progress = { ...progress, failed: finalFailed };
+        createFailedList(finalFailed);
+      } else {
+        progress = { ...progress, failed: [] };
+        if (combinedSuccess.length) {
+          downloadGoodreadsCsv(combinedSuccess);
+        }
+      }
+    } finally {
+      bulkWorking = false;
+      exportReadingWorking = false;
+    }
+  }
 </script>
 
 <div class="mdui-toolbar mdui-appbar mdui-appbar-fixed mdui-color-theme">
@@ -163,7 +235,7 @@
       <select
         class="mdui-select"
         bind:value={exportFormat}
-        disabled={bulkWorking}
+        disabled={bulkWorking || exportReadingWorking}
       >
         {#each EXPORT_FORMATS as option}
           <option value={option.value}>{option.label}</option>
@@ -175,14 +247,17 @@
         type="checkbox"
         bind:this={selectAllCheckbox}
         checked={allSelected}
-        disabled={!books.length || bulkWorking}
+        disabled={!books.length || bulkWorking || exportReadingWorking}
         on:change={toggleSelectAll}
       />
       <i class="mdui-checkbox-icon" />
       <span>全选</span>
     </label>
-    <button class="mdui-btn mdui-color-theme" on:click={handleBulkExport} disabled={!hasSelection || bulkWorking}>
-      {bulkWorking ? "导出中..." : "批量导出"}
+    <button class="mdui-btn" on:click={handleExportReadingRecords} disabled={!books.length || bulkWorking || exportReadingWorking}>
+      {exportReadingWorking ? "导出中..." : "导出阅读记录"}
+    </button>
+    <button class="mdui-btn mdui-color-theme" on:click={handleBulkExport} disabled={!hasSelection || bulkWorking || exportReadingWorking}>
+      {bulkWorking ? "导出中..." : "导出笔记"}
     </button>
   </div>
 </div>
